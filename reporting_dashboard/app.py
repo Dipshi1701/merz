@@ -1,5 +1,6 @@
 """Flask app factory and all routes."""
 
+import hmac
 import logging
 import os
 from datetime import date, timedelta
@@ -9,8 +10,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Blueprint, Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 
-from reporting_dashboard.config import REPORT_DIR
-from reporting_dashboard.dashboard import get_adverse_events, get_insights, get_questions_by_session, get_survey_by_session
+from reporting_dashboard.config import REPORT_DIR, get_reporting_today
+from reporting_dashboard.dashboard import (
+    get_adverse_events, get_archive_years, get_insights,
+    get_questions_by_session, get_survey_by_session,
+)
 from reporting_dashboard.db import init_db
 from reporting_dashboard.excel import generate_excel
 from reporting_dashboard.sync import sync
@@ -40,7 +44,7 @@ def _login_required(f):
 # ---------------------------------------------------------------------------
 
 def _default_dates():
-    end = date.today() - timedelta(days=1)
+    end = get_reporting_today() - timedelta(days=1)
     return end - timedelta(days=1), end
 
 
@@ -82,15 +86,17 @@ def login():
     username = ""
 
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
+        username = request.form.get("username") or ""
         password = request.form.get("password") or ""
         valid_user = (os.getenv("DASHBOARD_USERNAME") or "").strip()
         valid_pass = os.getenv("DASHBOARD_PASSWORD") or ""
+        valid_user = (os.getenv("DASHBOARD_USERNAME") or "").strip()
+ 
 
         if not valid_user or not valid_pass:
             logger.warning("Dashboard credentials are not configured in the environment.")
             error = "Dashboard login is not configured."
-        elif username == valid_user and password == valid_pass:
+        elif hmac.compare_digest(username, valid_user) and hmac.compare_digest(password, valid_pass):
             session["logged_in"] = True
             session.permanent = True          # honour PERMANENT_SESSION_LIFETIME
             return redirect(url_for("dashboard.index"))
@@ -98,7 +104,7 @@ def login():
             error = "Invalid username or password."
 
     return render_template("login.html", error=error, username=username,
-                           year=date.today().year)
+                           year=get_reporting_today().year)
 
 
 @bp.route("/logout")
@@ -111,11 +117,21 @@ def logout():
 @_login_required
 def index():
     start, end = _default_dates()
+    today = get_reporting_today()
     return render_template("dashboard.html",
                            default_start=start.isoformat(),
                            default_end=end.isoformat(),
-                           today=date.today().isoformat(),
-                           now=date.today())
+                           today=today.isoformat(),
+                           now=today)
+
+
+@bp.route("/api/archive-years")
+@_login_required
+def archive_years():
+    return jsonify({
+        "success": True,
+        "years": get_archive_years(get_reporting_today().year),
+    })
 
 
 @bp.route("/api/sync", methods=["POST"])

@@ -309,17 +309,12 @@ def _normalize_product(value: str) -> str:
 
 
 def _map_source_for_display(raw_source: str) -> str:
-    """Map raw source to display name for client reports.
-    
-    Only merz_uat and merz_prod are included in client reports.
-    Both map to 'Prod' for display.
-    """
     if not raw_source:
         return "Prod"
     source_lower = raw_source.strip().lower()
-    if source_lower in ("merz_uat", "merz_prod"):
+    if source_lower == "merz_production":
         return "Prod"
-    return "Prod"  # Fallback, though filtered records should only be merz_uat/merz_prod
+    return "Prod" 
 
 
 def product_from_matchings(matchings: list[dict], titles: dict[int, str]) -> str:
@@ -437,12 +432,12 @@ def build_report_rows(cfg: Settings, report_date: date) -> list[dict[str, Any]]:
         q for q in client.questions(report_date)
         if q.get("event_id") and in_day(q.get("date", ""), report_date, cfg.tz)
         and (q.get("user_question") or "").strip()
-        and (q.get("source") or "").strip().lower() in ("merz_uat", "merz_prod")
+        and (q.get("source") or "").strip().lower() == "merz_production"
     ]
     details = [
         s for s in client.session_details(report_date)
         if (in_day(s.get("date", ""), report_date, cfg.tz) or not s.get("date"))
-        and (s.get("source") or "").strip().lower() in ("merz_uat", "merz_prod")
+        and (s.get("source") or "").strip().lower() == "merz_production"
     ]
     session_events = client.sessions(report_date)
     clicks = client.clicks(report_date)

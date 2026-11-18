@@ -381,7 +381,7 @@ def _week_keys_for_range(start_date: date, end_date: date) -> List[str]:
 
 
 def generate_excel(start_date: date, end_date: date) -> str:
-    """Always sync from API then build Excel."""
+    """Refresh eligible recent dates from the API, then build the Excel export."""
     from reporting_dashboard.sync import sync
     from reporting_dashboard.api import create_editor_client
 

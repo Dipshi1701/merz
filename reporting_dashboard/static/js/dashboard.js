@@ -6,6 +6,7 @@ let adverseChart = null;
 let productChart = null;
 let ratingChart = null;
 let searchTimer = null;
+let activeReportDates = null;
 
 const appShell = document.getElementById("appShell");
 const filterForm = document.getElementById("filterForm");
@@ -13,6 +14,8 @@ const startInput = document.getElementById("startDate");
 const endInput = document.getElementById("endDate");
 const generateBtn = document.getElementById("generateBtn");
 const exportBtn = document.getElementById("exportBtn");
+const headerExportBtn = document.getElementById("headerExportBtn");
+const exportButtons = [exportBtn, headerExportBtn];
 const emptyState = document.getElementById("emptyState");
 const dashboard = document.getElementById("dashboardContent");
 const loader = document.getElementById("loadingOverlay");
@@ -48,7 +51,9 @@ function showLoader(on, text) {
     loader.classList.toggle("is-visible", on);
     loaderText.textContent = text || "Syncing data from API…";
     generateBtn.disabled = on;
-    exportBtn.disabled = on || !reportLoaded;
+    exportButtons.forEach(function (button) {
+        button.disabled = on || !reportLoaded;
+    });
 }
 
 function showEmptyView() {
@@ -117,16 +122,8 @@ function setupSidebar() {
 // --- Date pickers ---
 
 function setupDatePickers() {
-    // Restrict calendar to last 1 month only
-    const todayDate = new Date(today);
-    const oneMonthAgo = new Date(todayDate);
-    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
-    const minAllowed = oneMonthAgo.toISOString().slice(0, 10);
-
     const opts = {
         dateFormat: "Y-m-d",
-        minDate: minAllowed,
-        maxDate: today,
         disableMobile: true,
     };
 
@@ -143,7 +140,7 @@ function setupDatePickers() {
     flatpickr(endInput, {
         ...opts,
         defaultDate: endInput.value,
-        minDate: startInput.value || minAllowed,
+        minDate: startInput.value,
     });
 }
 
@@ -168,6 +165,126 @@ async function apiPost(url, body) {
         throw new Error(data.error || "Something went wrong");
     }
     return data;
+}
+
+async function apiGet(url) {
+    const response = await fetch(url);
+    let data;
+    try {
+        data = await response.json();
+    } catch {
+        throw new Error("Bad response from server — check the terminal for errors.");
+    }
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || "Something went wrong");
+    }
+    return data;
+}
+
+function renderMonthButtons(container, year, firstMonth, lastMonth) {
+    const monthNames = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ];
+    const shortNames = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    container.innerHTML = "";
+    monthNames.forEach(function (name, index) {
+        const month = String(index + 1).padStart(2, "0");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "archive-month-button";
+        button.textContent = shortNames[index];
+        button.setAttribute("aria-label", name + " " + year);
+        button.dataset.month = year + "-" + month;
+        button.disabled = index + 1 < firstMonth || index + 1 > lastMonth;
+        if (button.disabled) {
+            button.title = index + 1 < firstMonth
+                ? "Reports are available starting in June."
+                : "This month is not complete yet.";
+        } else {
+            button.addEventListener("click", function () {
+                loadArchiveMonth(button.dataset.month, button);
+            });
+        }
+        container.appendChild(button);
+    });
+}
+
+async function setupMonthlyArchive() {
+    const currentYear = new Date(today + "T00:00:00").getFullYear();
+    const currentMonths = $("currentYearMonths");
+    const archiveMonths = $("archiveMonths");
+    const archiveYear = $("archiveYear");
+    const currentMonth = new Date(today + "T00:00:00").getMonth() + 1;
+    $("currentYearHeading").textContent = currentYear;
+    renderMonthButtons(currentMonths, currentYear, 6, currentMonth - 1);
+
+    archiveYear.addEventListener("change", function () {
+        const year = archiveYear.value;
+        if (!year) {
+            $("archiveYearHeading").classList.add("is-hidden");
+            archiveMonths.classList.add("is-hidden");
+            return;
+        }
+        $("archiveYearHeading").textContent = year;
+        $("archiveYearHeading").classList.remove("is-hidden");
+        archiveMonths.classList.remove("is-hidden");
+        renderMonthButtons(archiveMonths, year);
+    });
+
+    try {
+        const data = await apiGet("/api/archive-years");
+        archiveYear.innerHTML = '<option value="">Select a year</option>';
+        data.years.forEach(function (year) {
+            const option = document.createElement("option");
+            option.value = year;
+            option.textContent = year;
+            archiveYear.appendChild(option);
+        });
+        archiveYear.disabled = data.years.length === 0;
+    } catch (err) {
+        archiveYear.innerHTML = '<option value="">Archive unavailable</option>';
+        showToast("Could not load archive years: " + err.message, "error");
+    }
+}
+
+async function loadArchiveMonth(monthKey, selectedButton) {
+    const [year, month] = monthKey.split("-").map(Number);
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    const formatDate = function (d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") +
+            "-" + String(d.getDate()).padStart(2, "0");
+    };
+    const startDate = formatDate(start);
+    const endDate = formatDate(end);
+
+    document.querySelectorAll(".archive-month-button").forEach(function (button) {
+        button.classList.toggle("is-selected", button === selectedButton);
+    });
+
+    showLoader(true, "Loading saved report from database…");
+    try {
+        const data = await apiPost("/api/refresh", {
+            start_date: startDate,
+            end_date: endDate,
+            search: sessionSearch.value.trim(),
+        });
+        activeReportDates = { start_date: startDate, end_date: endDate };
+        updateDashboard(data);
+        if (data.insights.metrics.total_questions === 0) {
+            showToast("No saved questions found for " + monthKey + ".", "info");
+        } else {
+            showToast("Loaded saved report for " + monthKey + " from the database.", "success");
+        }
+    } catch (err) {
+        showToast(err.message, "error");
+    } finally {
+        showLoader(false);
+    }
 }
 
 
@@ -522,7 +639,9 @@ function updateDashboard(data) {
     reportLoaded = true;
     showReportView();
 
-    exportBtn.disabled = false;
+    exportButtons.forEach(function (button) {
+        button.disabled = false;
+    });
     sessionSearch.disabled = false;
     periodLabel.textContent = data.period_label;
 
@@ -566,13 +685,14 @@ function updateDashboard(data) {
 // --- Events ---
 
 async function loadReport(start_date, end_date, silent) {
-    showLoader(true, "Syncing data from API…");
+    showLoader(true, "Loading report and refreshing recent data…");
     try {
         const data = await apiPost("/api/sync", {
             start_date,
             end_date,
             search: sessionSearch.value.trim(),
         });
+        activeReportDates = { start_date, end_date };
         updateDashboard(data);
         if (!silent) showToast(data.message, "success");
     } catch (err) {
@@ -599,8 +719,8 @@ filterForm.addEventListener("submit", async function (e) {
     }
 });
 
-exportBtn.addEventListener("click", async function () {
-    const dates = getSelectedDates();
+async function exportReport() {
+    const dates = activeReportDates || getSelectedDates();
     showLoader(true, "Generating Excel report…");
     try {
         const data = await apiPost("/api/export", dates);
@@ -611,6 +731,10 @@ exportBtn.addEventListener("click", async function () {
     } finally {
         showLoader(false);
     }
+}
+
+exportButtons.forEach(function (button) {
+    button.addEventListener("click", exportReport);
 });
 
 sessionSearch.addEventListener("input", function () {
@@ -618,7 +742,7 @@ sessionSearch.addEventListener("input", function () {
 
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async function () {
-        const dates = getSelectedDates();
+        const dates = activeReportDates || getSelectedDates();
         try {
             const data = await apiPost("/api/refresh", {
                 start_date: dates.start_date,
@@ -637,6 +761,7 @@ sessionSearch.addEventListener("input", function () {
 
 setupSidebar();
 setupDatePickers();
+setupMonthlyArchive();
 
 // Auto-load last 2 days on first open (silent — no success toast)
 (async function autoLoad() {

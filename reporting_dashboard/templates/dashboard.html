@@ -15,11 +15,7 @@
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-top">
             <div class="sidebar-brand">
-                <div class="brand-icon"><i class="bi bi-chat-square-dots"></i></div>
-                <div class="brand-text">
-                    <h1>Merz Analytics</h1>
-                    <p>Conversational insights</p>
-                </div>
+                <img src="/static/css/images/alphalogo.png" alt="Alphanumeric" class="brand-logo-full">
             </div>
             <button type="button" class="sidebar-close-btn" id="sidebarCloseBtn" title="Close sidebar" aria-label="Close sidebar">
                 <i class="bi bi-chevron-left"></i>
@@ -58,6 +54,26 @@
             </form>
         </div>
 
+        <details class="sidebar-archive">
+            <summary class="sidebar-archive-summary" id="archiveHeading">
+                <i class="bi bi-calendar-month" aria-hidden="true"></i>
+                <span>Monthly Reports</span>
+                <i class="bi bi-chevron-down archive-chevron" aria-hidden="true"></i>
+            </summary>
+            <div class="sidebar-archive-content">
+                <div class="sidebar-archive-year">
+                    <span id="currentYearHeading"></span>
+                    <div class="archive-months" id="currentYearMonths" aria-label="Current year months"></div>
+                </div>
+                <label class="archive-year-picker" for="archiveYear">Previous years</label>
+                <select id="archiveYear" class="archive-year-select" disabled>
+                    <option value="">Loading…</option>
+                </select>
+                <div class="archive-year-heading is-hidden" id="archiveYearHeading"></div>
+                <div class="archive-months is-hidden" id="archiveMonths" aria-label="Archived months"></div>
+            </div>
+        </details>
+
         <div class="sidebar-footer">
             <i class="bi bi-database"></i>
             <span>Merz Reporting API</span>
@@ -76,9 +92,19 @@
                     <p class="subtitle">Reporting data from the Merz Reporting API</p>
                 </div>
             </div>
-            <div class="header-meta" id="periodBadge">
-                <i class="bi bi-calendar-range"></i>
-                <span id="periodLabel"></span>
+            <div class="header-right">
+                <div class="header-meta" id="periodBadge">
+                    <i class="bi bi-calendar-range"></i>
+                    <span id="periodLabel"></span>
+                </div>
+                <button type="button" class="export-header-btn" id="headerExportBtn" title="Export Excel" disabled>
+                    <i class="bi bi-file-earmark-excel"></i>
+                    <span>Export Excel</span>
+                </button>
+                <a href="/logout" class="logout-btn" title="Sign out">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span>Sign out</span>
+                </a>
             </div>
         </header>
 
@@ -103,94 +129,122 @@
             </button>
         </section>
 
-        <!-- Dashboard (hidden until loaded) -->
-        <div id="dashboardContent" class="dashboard-content">
-            <!-- Metric cards row 1 -->
-            <section class="metrics-grid">
-                <div class="metric-card metric-indigo">
-                    <div class="metric-icon"><i class="bi bi-question-circle"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mTotalQuestions">—</span>
-                        <span class="metric-label">Total Questions</span>
-                    </div>
-                </div>
-                <div class="metric-card metric-teal">
-                    <div class="metric-icon"><i class="bi bi-chat-dots"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mTotalSessions">—</span>
-                        <span class="metric-label">Conversations</span>
-                    </div>
-                </div>
-                <div class="metric-card metric-violet">
-                    <div class="metric-icon"><i class="bi bi-graph-up"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mAvgPerSession">—</span>
-                        <span class="metric-label">Avg Questions / Session</span>
-                    </div>
-                </div>
-                <div class="metric-card metric-amber">
-                    <div class="metric-icon"><i class="bi bi-calendar-day"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mAvgPerDay">—</span>
-                        <span class="metric-label">Avg Questions / Day</span>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Metric cards row 2 -->
-            <section class="metrics-grid">
-                <div class="metric-card metric-rose">
-                    <div class="metric-icon"><i class="bi bi-cursor"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mClickRate">—</span>
-                        <span class="metric-label">Content Click Rate</span>
-                    </div>
-                </div>
-                <div class="metric-card metric-sky">
-                    <div class="metric-icon"><i class="bi bi-hand-index-thumb"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mTotalClicks">—</span>
-                        <span class="metric-label">Total Content Clicks</span>
-                    </div>
-                </div>
-                <div class="metric-card metric-emerald">
-                    <div class="metric-icon"><i class="bi bi-trophy"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mPeakDay">—</span>
-                        <span class="metric-label">Peak Day <small id="mPeakDayDate"></small></span>
-                    </div>
-                </div>
-                <div class="metric-card metric-red">
-                    <div class="metric-icon"><i class="bi bi-exclamation-triangle"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mAdverse">—</span>
-                        <span class="metric-label">Adverse Events</span>
-                        <div class="adverse-breakdown is-hidden" id="mAdverseBreakdown">
-                            <span class="severity-chip severity-high">High <strong id="mAdverseHigh">0</strong></span>
-                            <span class="severity-chip severity-medium">Med <strong id="mAdverseMedium">0</strong></span>
-                            <span class="severity-chip severity-low">Low <strong id="mAdverseLow">0</strong></span>
+       <div id="dashboardContent" class="dashboard-content">
+            <section class="metric-groups">
+                <div class="metric-group">
+                    <h3 class="metric-group-title">Conversations</h3>
+                    <div class="metrics-grid metrics-grid--4">
+                        <div class="metric-card metric-teal">
+                            <div class="metric-icon"><i class="bi bi-chat-dots"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mTotalSessions">2</span>
+                                <span class="metric-label">Total Sessions</span>
+                                <span class="metric-desc">Unique chatbot conversations in the selected date range.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-violet">
+                            <div class="metric-icon"><i class="bi bi-graph-up"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mAvgPerSession">2.5</span>
+                                <span class="metric-label">Average Questions</span>
+                                <span class="metric-desc">Average number of user questions per conversation.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-cyan">
+                            <div class="metric-icon"><i class="bi bi-person-badge"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mHcpSessions">2</span>
+                                <span class="metric-label">HCP Sessions</span>
+                                <span class="metric-desc">Sessions where the user was identified as a healthcare professional.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-lime">
+                            <div class="metric-icon"><i class="bi bi-person"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mConsumerSessions">0</span>
+                                <span class="metric-label">Patient Sessions</span>
+                                <span class="metric-desc">Sessions where the user was identified as a patient or consumer.</span>
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="metric-card metric-slate">
-                    <div class="metric-icon"><i class="bi bi-slash-circle"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mZeroClickRate">—</span>
-                        <span class="metric-label">Zero-Click Sessions <small id="mZeroClickCount"></small></span>
+
+                <div class="metric-group">
+                    <h3 class="metric-group-title">Questions</h3>
+                    <div class="metrics-grid metrics-grid--3">
+                        <div class="metric-card metric-indigo">
+                            <div class="metric-icon"><i class="bi bi-question-circle"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mTotalQuestions">5</span>
+                                <span class="metric-label">Total Questions</span>
+                                <span class="metric-desc">Total user questions submitted in the selected period.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-amber">
+                            <div class="metric-icon"><i class="bi bi-calendar-day"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mAvgPerDay">2.5</span>
+                                <span class="metric-label">Questions per Day</span>
+                                <span class="metric-desc">Average questions per calendar day in the range.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-emerald">
+                            <div class="metric-icon"><i class="bi bi-trophy"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mPeakDay">5</span>
+                                <span class="metric-label">Peak Day <small id="mPeakDayDate">(11 Nov 2026)</small></span>
+                                <span class="metric-desc">Day with the highest question volume in the range.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="metric-card metric-cyan">
-                    <div class="metric-icon"><i class="bi bi-person-badge"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mHcpSessions">—</span>
-                        <span class="metric-label">HCP Sessions</span>
+
+                <div class="metric-group">
+                    <h3 class="metric-group-title">Content</h3>
+                    <div class="metrics-grid metrics-grid--3">
+                        <div class="metric-card metric-rose">
+                            <div class="metric-icon"><i class="bi bi-cursor"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mClickRate">50%</span>
+                                <span class="metric-label">Content Click Rate</span>
+                                <span class="metric-desc">Percentage of displayed content that users clicked.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-sky">
+                            <div class="metric-icon"><i class="bi bi-hand-index-thumb"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mTotalClicks">2</span>
+                                <span class="metric-label">Total Content Clicks</span>
+                                <span class="metric-desc">Total clicks on recommended content across all questions.</span>
+                            </div>
+                        </div>
+                        <div class="metric-card metric-slate">
+                            <div class="metric-icon"><i class="bi bi-slash-circle"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mZeroClickRate">0%</span>
+                                <span class="metric-label">Zero-Click Sessions <small id="mZeroClickCount">(0 sessions)</small></span>
+                                <span class="metric-desc">Share of sessions where no recommended content was clicked.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="metric-card metric-lime">
-                    <div class="metric-icon"><i class="bi bi-person"></i></div>
-                    <div class="metric-body">
-                        <span class="metric-value" id="mConsumerSessions">—</span>
-                        <span class="metric-label">Patient Sessions</span>
+
+                <div class="metric-group">
+                    <h3 class="metric-group-title">Compliance</h3>
+                    <div class="metrics-grid metrics-grid--1">
+                        <div class="metric-card metric-red">
+                            <div class="metric-icon"><i class="bi bi-flag"></i></div>
+                            <div class="metric-body">
+                                <span class="metric-value" id="mAdverse">1</span>
+                                <span class="metric-label">Flagged Transcripts</span>
+                                <span class="metric-desc">Transcripts flagged based on keyword detection.</span>
+                                <div class="adverse-breakdown" id="mAdverseBreakdown">
+                                    <span class="severity-chip severity-high">High <strong id="mAdverseHigh">0</strong></span>
+                                    <span class="severity-chip severity-medium">Med <strong id="mAdverseMedium">0</strong></span>
+                                    <span class="severity-chip severity-low">Low <strong id="mAdverseLow">1</strong></span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -202,17 +256,17 @@
                         <h3><i class="bi bi-activity"></i> Daily Question Volume</h3>
                     </div>
                     <div class="panel-body chart-body" id="volumeChartBody">
-                        <canvas id="volumeChart"></canvas>
+                        <canvas id="volumeChart" style="display: block; box-sizing: border-box; height: 220px; width: 666px;" width="1332" height="440"></canvas>
                         <p class="chart-empty is-hidden" id="volumeEmpty">No question data for this period.</p>
                     </div>
                 </div>
                 <div class="panel" id="adversePanel">
                     <div class="panel-header">
-                        <h3><i class="bi bi-shield-exclamation"></i> Daily Adverse Events</h3>
+                        <h3><i class="bi bi-shield-exclamation"></i> Daily Flagged Transcripts</h3>
                     </div>
                     <div class="panel-body chart-body" id="adverseChartBody">
-                        <canvas id="adverseChart"></canvas>
-                        <p class="chart-empty is-hidden" id="adverseEmpty">No adverse events for this period.</p>
+                        <canvas id="adverseChart" style="display: block; box-sizing: border-box; height: 220px; width: 666px;" width="1332" height="440"></canvas>
+                        <p class="chart-empty is-hidden" id="adverseEmpty">No flagged transcripts for this period.</p>
                     </div>
                 </div>
             </section>
@@ -228,7 +282,7 @@
                             <thead>
                                 <tr><th>#</th><th>Question</th><th>Times Asked</th></tr>
                             </thead>
-                            <tbody></tbody>
+                            <tbody><tr><td>1</td><td>report an adverse event belotero</td><td>1</td></tr><tr><td>2</td><td>radiesse dilute</td><td>1</td></tr><tr><td>3</td><td>immune disease</td><td>1</td></tr><tr><td>4</td><td>abdomen Radiesse</td><td>1</td></tr><tr><td>5</td><td>use of Radiesse in abdomen</td><td>1</td></tr></tbody>
                         </table>
                         <p class="table-empty is-hidden" id="topQuestionsEmpty">No questions found.</p>
                     </div>
@@ -242,7 +296,7 @@
                             <thead>
                                 <tr><th>#</th><th>Content Title</th><th>Clicks</th></tr>
                             </thead>
-                            <tbody></tbody>
+                            <tbody><tr><td>1</td><td>Radiesse - Dilute - Use in Arms</td><td>1</td></tr><tr><td>2</td><td>Report AE or PQC</td><td>1</td></tr></tbody>
                         </table>
                         <p class="table-empty is-hidden" id="topContentEmpty">No content clicks recorded yet.</p>
                     </div>
@@ -257,9 +311,9 @@
                 <div class="panel-body table-panel">
                     <table class="data-table data-table--ranked" id="contentVolumeTable">
                         <thead>
-                            <tr><th>#</th><th>Content Title</th><th>Times Shown</th><th>Times Clicked</th><th>CTR</th></tr>
+                            <tr><th>#</th><th>Content Title</th><th>Times Shown</th><th>Times Clicked</th><th>CTR <i class="bi bi-info-circle ctr-tooltip" title="Click-Through Rate: percentage of times content was clicked after being shown to the user"></i></th></tr>
                         </thead>
-                        <tbody></tbody>
+                        <tbody><tr><td>1</td><td>Radiesse - Dilute - Use in Decollete</td><td>1</td><td>0</td><td><span class="ctr-badge ctr-low">0%</span></td></tr><tr><td>2</td><td>Radiesse - Dilute - Use in Buttocks</td><td>1</td><td>0</td><td><span class="ctr-badge ctr-low">0%</span></td></tr><tr><td>3</td><td>Radiesse - Dilute - Use in Arms</td><td>1</td><td>1</td><td><span class="ctr-badge ctr-high">100%</span></td></tr><tr><td>4</td><td>Report AE or PQC</td><td>1</td><td>1</td><td><span class="ctr-badge ctr-high">100%</span></td></tr></tbody>
                     </table>
                     <p class="table-empty is-hidden" id="contentVolumeEmpty">No content recommendations found for this period.</p>
                 </div>
@@ -268,10 +322,10 @@
             <!-- Product Interactions -->
             <section class="panel">
                 <div class="panel-header">
-                    <h3><i class="bi bi-box-seam"></i> Interactions per Product</h3>
+                    <h3><i class="bi bi-box-seam"></i> Interactions per Option of Welcome Message</h3>
                 </div>
                 <div class="panel-body chart-body" id="productChartBody" style="height:280px;">
-                    <canvas id="productChart"></canvas>
+                    <canvas id="productChart" style="display: block; box-sizing: border-box; height: 240px; width: 666px;" width="1332" height="480"></canvas>
                     <p class="chart-empty is-hidden" id="productEmpty">No product interaction data for this period.</p>
                 </div>
             </section>
@@ -311,12 +365,12 @@
                     <h3><i class="bi bi-collection"></i> User Questions by Session</h3>
                     <div class="search-box">
                         <i class="bi bi-search"></i>
-                        <input type="search" id="sessionSearch" placeholder="Search questions…" disabled>
+                        <input type="search" id="sessionSearch" placeholder="Search questions…">
                     </div>
                 </div>
                 <div class="panel-body">
-                    <p class="session-count" id="sessionCount"></p>
-                    <div id="sessionsList" class="sessions-list"></div>
+                    <p class="session-count" id="sessionCount">2 session(s), 5 question(s)</p>
+                    <div id="sessionsList" class="sessions-list"><div class="session-item"><button type="button" class="session-toggle"><div class="session-meta"><span><strong>Session:</strong> 92095533aca75c5379f2bf817e3ea216</span><span><strong>Date:</strong> 2026-11-11</span><span><strong>Source:</strong> UAT</span></div><div class="session-toggle-right"><span class="session-badge">4 questions</span><i class="bi bi-chevron-down session-chevron"></i></div></button><div class="session-body"><div class="question-block"><div class="question-text"><span class="question-date">2026-11-11</span> — use of Radiesse in abdomen</div><div class="question-product"><span class="product-label">Product</span> <span class="product-badge">Radiesse</span></div><span class="no-clicks">No recommendations shown</span></div><div class="question-block"><div class="question-text"><span class="question-date">2026-11-11</span> — abdomen Radiesse</div><div class="question-product"><span class="product-label">Product</span> <span class="product-badge">Radiesse</span></div><span class="no-clicks">No recommendations shown</span></div><div class="question-block"><div class="question-text"><span class="question-date">2026-11-11</span> — immune disease</div><div class="question-product"><span class="product-label">Product</span> <span class="product-badge">Radiesse</span></div><span class="no-clicks">No recommendations shown</span></div><div class="question-block"><div class="question-text"><span class="question-date">2026-11-11</span> — radiesse dilute</div><div class="question-product"><span class="product-label">Product</span> <span class="product-badge">Radiesse</span></div><ul class="recs-list"><li class="rec-item rec-item--skipped"><i class="bi bi-circle rec-unclicked"></i>Radiesse - Dilute - Use in Decollete</li><li class="rec-item rec-item--skipped"><i class="bi bi-circle rec-unclicked"></i>Radiesse - Dilute - Use in Buttocks</li><li class="rec-item rec-item--clicked"><i class="bi bi-check-circle-fill rec-clicked"></i>Radiesse - Dilute - Use in Arms</li></ul></div></div></div><div class="session-item"><button type="button" class="session-toggle"><div class="session-meta"><span><strong>Session:</strong> 2b3d74b5abda33deb8009d2ffb4fb39b</span><span><strong>Date:</strong> 2026-11-11</span><span><strong>Source:</strong> UAT</span></div><div class="session-toggle-right"><span class="session-badge">1 question</span><i class="bi bi-chevron-down session-chevron"></i></div></button><div class="session-body"><div class="question-block"><div class="question-text"><span class="question-date">2026-11-11</span> — report an adverse event belotero</div><div class="question-product"><span class="product-label">Product</span> <span class="product-badge">Belotero</span></div><ul class="recs-list"><li class="rec-item rec-item--clicked"><i class="bi bi-check-circle-fill rec-clicked"></i>Report AE or PQC</li></ul></div></div></div></div>
                     <p class="table-empty is-hidden" id="sessionsEmpty">No questions found for this date range.</p>
                 </div>
             </section>
@@ -324,17 +378,17 @@
             <!-- Adverse events -->
             <section class="panel adverse-panel">
                 <div class="panel-header">
-                    <h3><i class="bi bi-flag"></i> Potential Adverse Events</h3>
+                    <h3><i class="bi bi-flag"></i> Flagged Transcripts</h3>
                 </div>
                 <div class="panel-body table-panel">
                     <table class="data-table" id="adverseTable">
                         <thead>
                             <tr><th>Date</th><th>Question</th><th>Reason</th><th>Source</th></tr>
                         </thead>
-                        <tbody></tbody>
+                        <tbody><tr><td>2026-11-11</td><td>report an adverse event belotero</td><td>low: adverse</td><td>UAT</td></tr></tbody>
                     </table>
-                    <p class="table-empty is-hidden" id="adverseEmpty">No adverse events detected for this date range.</p>
-                    <p class="table-caption" id="adverseCaption"></p>
+                    <p class="table-empty is-hidden" id="adverseEmpty">No flagged transcripts for this date range.</p>
+                    <p class="table-caption" id="adverseCaption">Found 1 flagged transcript(s)</p>
                 </div>
             </section>
         </div>

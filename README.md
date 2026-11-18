@@ -36,7 +36,7 @@ py -3 run_merz.py
 
 Then open **http://localhost:8501** in your browser.
 
-Pick a date range in the sidebar and click **Generate Report**. That fetches from Inbenta (when needed), stores data in MySQL, and loads the dashboard.
+Pick a date range of up to one calendar month in the sidebar and click **Generate Report**. That fetches from Inbenta (when needed), stores data in MySQL, and loads the dashboard.
 
 ---
 
@@ -49,6 +49,8 @@ Keep this file local. Don't commit it.
 ```env
 MERZ_DATABASE_URL=mysql+pymysql://root:password@127.0.0.1:3306/merz_db
 MERZ_REFRESH_DAYS=7
+DASHBOARD_USERNAME=...
+DASHBOARD_PASSWORD=...
 
 # Optional — needed if you want real content titles instead of "Content 123"
 MERZ_INBENTA_EDITOR_API_KEY=...
@@ -57,7 +59,7 @@ MERZ_INBENTA_EDITOR_PERSONAL_SECRET_KEY=...
 MERZ_INBENTA_EDITOR_BASE_URL=https://chatbot-api-us.inbenta.io/editor/v1
 ```
 
-`MERZ_REFRESH_DAYS` controls caching: dates within the last 7 days are always re-fetched from the API. Older dates are served from MySQL if they're already there.
+`MERZ_REFRESH_DAYS` is the rolling API refresh window in complete days. The default is `7`. Older dates are read from MySQL and are not requested from Inbenta by the dashboard. Set the dashboard login in the local `.env` using `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD`; login checks exact values and has no built-in credentials.
 
 ### `config.yaml` — Inbenta Reporting API
 
@@ -72,6 +74,7 @@ The Python code lives in `reporting_dashboard/` as a small set of flat modules �
 ```
 merz/
 ├── run_merz.py              # starts the server
+├── run_scheduled_sync.py    # daily refresh + monthly reconciliation
 ├── config.yaml              # Inbenta reporting API config
 ├── .env                     # your secrets (gitignored)
 ├── requirements.txt
@@ -92,15 +95,38 @@ If you're trying to find something: API calls → `api.py`, database tables → 
 
 ---
 
+## Automatic refresh and monthly archive
+
+The sidebar's **Monthly Reports** section reads saved data directly from MySQL. For the current year, June through the last completed month is selectable; earlier months, the current month, and future months are disabled. Prior years with saved questions remain available in the year selector. Choosing a month never calls the Inbenta API. The existing date filters and **Generate Report** button remain available separately.
+
+Run `run_scheduled_sync.py` once each day using the hosting provider's cron scheduler. The script refreshes the previous `MERZ_REFRESH_DAYS` complete days and, on the 2nd of each month, reconciles the entire previous month. Configure one daily cron entry; the script handles both schedules.
+
+Example cPanel cron entry (adjust the account path and time as needed):
+
+```cron
+0 2 * * * /home/alphanum/virtualenv/merz.alphanumeric.dev/3.11/bin/python /home/alphanum/merz.alphanumeric.dev/run_scheduled_sync.py >> /home/alphanum/merz.alphanumeric.dev/cron.log 2>&1
+```
+
+The refresh merges by event IDs: repeated records are updated/replaced within the refreshed week, new records are inserted, and records outside the fetched data are retained. The API refresh is split into ISO-week chunks so records are not assigned to the wrong week.
+
+For a one-time historical backfill, run the script manually with a date range that is still available from Inbenta:
+
+```bash
+python run_scheduled_sync.py --backfill-start 2026-08-01 --backfill-end 2026-08-31
+```
+
+Backfill older than Inbenta's retention period is only possible if that data was already saved in MySQL or is available from another export. Scheduled syncs cannot recover data the API has already expired.
+
 ## What happens when you click Generate Report
 
-1. **ingest.py** calls Inbenta day-by-day and writes raw rows (`raw_user_questions`, `raw_sessions`, clicks, ratings, etc.)
-2. **sync.py** enriches that data — content titles, adverse-event flags, HCP vs patient, recommendations
-3. Enriched rows go into `user_questions` (the table the dashboard actually reads)
-4. **dashboard.py** computes metrics and charts
-5. The browser gets JSON from `/api/sync` and renders everything
+1. **sync.py** refreshes only the selected dates that fall within the rolling API window; older dates remain DB-only.
+2. **ingest.py** calls Inbenta and merges raw rows (`raw_user_questions`, `raw_sessions`, clicks, ratings, etc.)
+3. **sync.py** enriches refreshed data — content titles, adverse-event flags, HCP vs patient, recommendations
+4. Enriched rows go into `user_questions` (the table the dashboard actually reads)
+5. **dashboard.py** computes metrics and charts
+6. The browser gets JSON from `/api/sync` and renders everything
 
-If all dates in your range are already cached and older than 7 days, the app skips the API call and just loads from MySQL.
+Selecting a month in Monthly Reports or using **Refresh** loads from MySQL only.
 
 ---
 
@@ -126,6 +152,7 @@ If all dates in your range are already cached and older than 7 days, the app ski
 | Route | What it does |
 |---|---|
 | `GET /` | Dashboard page |
+| `GET /api/archive-years` | Prior years with saved dashboard data |
 | `POST /api/sync` | Fetch from Inbenta if needed, return dashboard data |
 | `POST /api/refresh` | Reload dashboard from MySQL only (no API call) |
 | `POST /api/export` | Build Excel file, return download link |

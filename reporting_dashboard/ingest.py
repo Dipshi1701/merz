@@ -20,12 +20,6 @@ logger = logging.getLogger(__name__)
 _EST = ZoneInfo("America/New_York")
 _UTC = ZoneInfo("UTC")
 
-_WEEK_TABLES = [
-    RawUqMatching, RawClick, RawRating, RawSession,
-    RawUserQuestion, AggSessionDetail, SurveyAnswer,
-]
-
-
 # ---------------------------------------------------------------------------
 # EST date filtering
 # ---------------------------------------------------------------------------
@@ -146,16 +140,6 @@ def extract_session_details(details: List[Dict]) -> List[Dict]:
 # Raw DB writes
 # ---------------------------------------------------------------------------
 
-def clear_week(week_key: str) -> None:
-    db = get_session()
-    try:
-        for model in _WEEK_TABLES:
-            db.query(model).filter(model.week_key == week_key).delete()
-        db.commit()
-    finally:
-        db.close()
-
-
 def _record_run(week_key, status, start_time, end_time=None, record_counts="", error_message=""):
     db = get_session()
     try:
@@ -196,19 +180,37 @@ def insert_raw_questions(questions: List[Dict], week_key: str) -> int:
         db.close()
 
 
-def insert_matchings(matchings: List[Dict], week_key: str) -> int:
-    if not matchings:
-        return 0
+def _delete_existing_event_rows(db, model, records: List[Dict], week_key: str) -> None:
+    event_ids = {record.get("event_id") for record in records if record.get("event_id")}
+    if not event_ids:
+        return
+    db.query(model).filter(
+        model.week_key == week_key,
+        model.event_id.in_(event_ids),
+    ).delete(synchronize_session=False)
+
+
+def _replace_matchings(matchings: List[Dict], event_ids: List[str], week_key: str) -> int:
+    refreshed_ids = {event_id for event_id in event_ids if event_id}
     db = get_session()
     try:
-        db.bulk_insert_mappings(RawUqMatching, [
-            {"event_id": m.get("event_id", ""), "id_content": m.get("id_content"),
-             "weight": m.get("weight"), "is_external": bool(m.get("is_external", False)),
-             "week_key": week_key}
-            for m in matchings
-        ])
+        if refreshed_ids:
+            db.query(RawUqMatching).filter(
+                RawUqMatching.week_key == week_key,
+                RawUqMatching.event_id.in_(refreshed_ids),
+            ).delete(synchronize_session=False)
+        if matchings:
+            db.bulk_insert_mappings(RawUqMatching, [
+                {"event_id": m.get("event_id", ""), "id_content": m.get("id_content"),
+                 "weight": m.get("weight"), "is_external": bool(m.get("is_external", False)),
+                 "week_key": week_key}
+                for m in matchings
+            ])
         db.commit()
         return len(matchings)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -218,6 +220,7 @@ def insert_raw_sessions(sessions: List[Dict], week_key: str) -> int:
         return 0
     db = get_session()
     try:
+        _delete_existing_event_rows(db, RawSession, sessions, week_key)
         db.bulk_insert_mappings(RawSession, [
             {"event_id": s.get("event_id", ""), "session_id": s.get("session_id", "") or "",
              "key": s.get("key", "") or "", "value": s.get("value", "") or "",
@@ -227,6 +230,9 @@ def insert_raw_sessions(sessions: List[Dict], week_key: str) -> int:
         ])
         db.commit()
         return len(sessions)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -236,6 +242,7 @@ def insert_clicks(clicks: List[Dict], week_key: str) -> int:
         return 0
     db = get_session()
     try:
+        _delete_existing_event_rows(db, RawClick, clicks, week_key)
         db.bulk_insert_mappings(RawClick, [
             {"event_id": c.get("event_id", ""), "session_id": c.get("session_id", "") or "",
              "id_content": c.get("id_content"), "click_type": c.get("click_type", "") or "",
@@ -245,6 +252,9 @@ def insert_clicks(clicks: List[Dict], week_key: str) -> int:
         ])
         db.commit()
         return len(clicks)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -254,6 +264,7 @@ def insert_ratings(ratings: List[Dict], week_key: str) -> int:
         return 0
     db = get_session()
     try:
+        _delete_existing_event_rows(db, RawRating, ratings, week_key)
         db.bulk_insert_mappings(RawRating, [
             {"event_id": r.get("event_id", ""), "session_id": r.get("session_id", "") or "",
              "rating": str(r.get("rating", "") or ""), "comment": r.get("comment", "") or "",
@@ -263,6 +274,9 @@ def insert_ratings(ratings: List[Dict], week_key: str) -> int:
         ])
         db.commit()
         return len(ratings)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -365,7 +379,7 @@ def get_unique_content_ids(week_key: str) -> List[int]:
 # Full ingest pipeline
 # ---------------------------------------------------------------------------
 
-def ingest_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
+def _ingest_week_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
     config = ConfigLoader()
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.min.time())
@@ -374,21 +388,35 @@ def ingest_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
     client = get_reporting_client()
     allowed_sources = config.get_filters_config().get("sources", []) or None
 
-    clear_week(week_key)
     run_start = datetime.utcnow()
     counts: Dict[str, int] = {}
 
     try:
-        questions_raw = filter_by_est_range(client.get_user_questions(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt)
+        questions_raw = filter_by_est_range(
+            client.get_user_questions(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt
+        )
+        details_raw = filter_by_est_range(
+            client.get_session_details(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt
+        )
+        sessions_raw = filter_by_est_range(
+            client.get_sessions(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt
+        )
+        clicks_raw = filter_by_est_range(
+            client.get_clicks(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt
+        )
+        ratings_raw = filter_by_est_range(
+            client.get_ratings(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt
+        )
+
         questions, matchings = extract_user_questions(questions_raw)
         counts["raw_user_questions"] = insert_raw_questions(questions, week_key)
-        counts["raw_uq_matchings"] = insert_matchings(matchings, week_key)
+        counts["raw_uq_matchings"] = _replace_matchings(
+            matchings, [q["event_id"] for q in questions], week_key
+        )
 
-        details_raw = filter_by_est_range(client.get_session_details(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt)
         details = extract_session_details(details_raw)
         counts["agg_session_details"] = upsert_session_details(details, week_key)
 
-        sessions_raw = filter_by_est_range(client.get_sessions(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt)
         valid_log_ids = {q["event_id"] for q in questions}
         # Keep VARIABLES/SEARCH for sessions that contain our questions (needed for product_context).
         question_session_ids = set()
@@ -410,13 +438,16 @@ def ingest_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
         ]
         counts["raw_sessions"] = insert_raw_sessions(extract_sessions(filtered_sessions), week_key)
 
-        clicks_raw = filter_by_est_range(client.get_clicks(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt)
         counts["raw_clicks"] = insert_clicks(extract_clicks(clicks_raw), week_key)
 
-        ratings_raw = filter_by_est_range(client.get_ratings(start_dt, end_dt, sources=allowed_sources), start_dt, end_dt)
         counts["raw_ratings"] = insert_ratings(extract_ratings(ratings_raw), week_key)
 
-        counts["survey_answers"] = _ingest_survey_answers(client, week_key)
+        survey_events = [
+            {"session_id": s.get("session_id"), "answer_id": s.get("value"), "date": s.get("date")}
+            for s in filtered_sessions
+            if s.get("key") == "SURVEY_ANSWER" and s.get("value")
+        ]
+        counts["survey_answers"] = _ingest_survey_answers(client, week_key, survey_events)
 
         _record_run(week_key, "completed", run_start, datetime.utcnow(), json.dumps(counts))
         return {"week_key": week_key, "counts": counts}
@@ -426,8 +457,28 @@ def ingest_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
         raise
 
 
-def _ingest_survey_answers(client, week_key: str) -> int:
-    survey_events = get_survey_answer_ids(week_key)
+def ingest_from_api(start_date: date, end_date: date) -> Dict[str, Any]:
+    """Fetch a date range in ISO-week chunks without deleting retained records."""
+    week_results = []
+    current = start_date
+    while current <= end_date:
+        week_end = min(end_date, current + timedelta(days=6 - current.weekday()))
+        week_results.append(_ingest_week_from_api(current, week_end))
+        current = week_end + timedelta(days=1)
+
+    counts: Dict[str, int] = {}
+    for result in week_results:
+        for name, count in result["counts"].items():
+            counts[name] = counts.get(name, 0) + count
+    return {
+        "week_keys": [result["week_key"] for result in week_results],
+        "counts": counts,
+    }
+
+
+def _ingest_survey_answers(client, week_key: str, survey_events=None) -> int:
+    if survey_events is None:
+        survey_events = get_survey_answer_ids(week_key)
     if not survey_events:
         return 0
     parsed = []

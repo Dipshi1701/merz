@@ -6,11 +6,15 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
-from sqlalchemy import func
+from sqlalchemy import extract, func
 
 from reporting_dashboard.db import AggSessionDetail, UserQuestion, SurveyAnswer, get_session
 
 logger = logging.getLogger(__name__)
+
+
+def _display_source(source: str) -> str:
+    return "PROD" if (source or "").strip().lower() == "merz_production" else "UAT"
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +40,7 @@ def get_questions(start: date, end: date, search: str = "") -> List[Dict]:
             results.append({
                 "date": r.question_date.strftime("%Y-%m-%d") if r.question_date else "",
                 "question": r.user_question or "",
-                "source": r.source or "",
+                "source": _display_source(r.source),
                 "session_id": r.session_id or "",
                 "adverse_event": r.adverse_event,
                 "adverse_reason": r.adverse_reason or "",
@@ -44,6 +48,22 @@ def get_questions(start: date, end: date, search: str = "") -> List[Dict]:
                 "recommendations": recommendations,
             })
         return results
+    finally:
+        db.close()
+
+
+def get_archive_years(current_year: int) -> List[int]:
+    """Return prior years that have dashboard data saved in the database."""
+    db = get_session()
+    try:
+        years = (db.query(extract("year", UserQuestion.question_date))
+                 .filter(UserQuestion.question_date.isnot(None))
+                 .distinct()
+                 .all())
+        return sorted({
+            int(row[0]) for row in years
+            if row[0] and int(row[0]) < current_year
+        }, reverse=True)
     finally:
         db.close()
 
@@ -58,7 +78,7 @@ def get_adverse_events(start: date, end: date) -> List[Dict]:
                 .all())
         return [{"date": r.question_date.strftime("%Y-%m-%d") if r.question_date else "",
                  "question": r.user_question or "", "reason": r.adverse_reason or "",
-                 "source": r.source or ""} for r in rows]
+                 "source": _display_source(r.source)} for r in rows]
     finally:
         db.close()
 

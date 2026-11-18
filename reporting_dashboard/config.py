@@ -4,9 +4,10 @@ import os
 import re
 import yaml
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -27,6 +28,12 @@ DATABASE_URL = os.getenv(
 
 # --- Sync behaviour ---
 REFRESH_DAYS = int(os.getenv("MERZ_REFRESH_DAYS", "7"))
+REPORTING_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def get_reporting_today() -> date:
+    """Return today's date in the reporting API's Eastern time zone."""
+    return datetime.now(REPORTING_TIMEZONE).date()
 
 # Inbenta Reporting API environment filter: development | preproduction | production
 INBENTA_ENV = (os.getenv("MERZ_INBENTA_ENV") or "production").strip().lower()

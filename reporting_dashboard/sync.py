@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
 from reporting_dashboard.db import RawClick, RawSession, RawUqMatching, RawUserQuestion, UserQuestion, get_session
@@ -11,6 +11,7 @@ from reporting_dashboard.ingest import (
     ingest_from_api, read_raw_questions, upsert_content_title,
 )
 from reporting_dashboard.api import create_editor_client
+from reporting_dashboard.config import REFRESH_DAYS, get_reporting_today
 
 logger = logging.getLogger(__name__)
 
@@ -397,56 +398,80 @@ def backfill_product_context(start_date: date, end_date: date) -> Dict[str, int]
     return combined_stats
 
 
-def sync(start_date: date, end_date: date) -> Dict[str, Any]:
-    """Always fetch from API and save enriched questions to user_questions."""
-    result = ingest_from_api(start_date, end_date)
-    week_key = result["week_key"]
+def sync(start_date: date, end_date: date, force_api: bool = False) -> Dict[str, Any]:
+    """Refresh eligible dates from the API and merge results into the database."""
+    if force_api:
+        api_start, api_end = start_date, end_date
+    else:
+        latest_complete_day = get_reporting_today() - timedelta(days=1)
+        earliest_refresh_day = latest_complete_day - timedelta(days=max(REFRESH_DAYS, 1) - 1)
+        api_start = max(start_date, earliest_refresh_day)
+        api_end = min(end_date, latest_complete_day)
 
-    raw_questions = read_raw_questions(week_key)
-    session_map = build_session_map(week_key)
-    editor_client = create_editor_client()
-    enrichment_map = enrich_all_questions(week_key, editor_client)
-
-    records = []
-    for row in raw_questions:
-        event_id = row.get("event_id", "")
-        question_text = row.get("user_question", "") or ""
-        is_adverse, reason = check_adverse_event(question_text)
-        log_id = row.get("log_id", "") or ""
-        session_info = session_map.get(event_id) or session_map.get(log_id) or {}
-        session_id = session_info.get("session_id", "") if isinstance(session_info, dict) else session_info
-        user_type = session_info.get("user_type", "") if isinstance(session_info, dict) else ""
-        q_date = _parse_date(row.get("date", ""))
-        if not q_date or not (start_date <= q_date <= end_date):
-            continue
-        records.append({
-            "event_id": event_id,
-            "user_question": question_text,
-            "question_date": q_date,
-            "log_id": log_id,
-            "source": str(row.get("source", "") or ""),
-            "session_id": session_id,
-            "adverse_event": is_adverse,
-            "adverse_reason": reason,
-            "user_type": user_type,
-            "recommendations_json": json.dumps(enrichment_map.get(event_id, [])),
-            "product_context": "",
-        })
-
-    product_stats = resolve_product_context(records, week_key)
-    q_count = upsert_questions(records)
-    backfill_stats = backfill_product_context(start_date, end_date)
-    if backfill_stats.get("updated"):
-        product_stats = {
-            "from_recommendations": (
-                product_stats["from_recommendations"] + backfill_stats.get("from_recommendations", 0)
-            ),
-            "from_session_events": (
-                product_stats["from_session_events"] + backfill_stats.get("from_session_events", 0)
-            ),
-            "still_missing": backfill_stats.get("still_missing", product_stats["still_missing"]),
+    if api_start > api_end:
+        return {
+            "fetched_from_api": False,
+            "message": "Loaded saved data from the database; this date range is outside the API refresh window.",
+            "questions_synced": 0,
+            "conversations_synced": 0,
+            "ingestion_counts": {},
+            "product_stats": {},
         }
-    day_count = (end_date - start_date).days + 1
+
+    result = ingest_from_api(api_start, api_end)
+    editor_client = create_editor_client()
+    q_count = 0
+    product_stats = {"from_recommendations": 0, "from_session_events": 0, "still_missing": 0}
+    for week_key in result["week_keys"]:
+        raw_questions = read_raw_questions(week_key)
+        session_map = build_session_map(week_key)
+        enrichment_map = enrich_all_questions(week_key, editor_client)
+
+        records = []
+        for row in raw_questions:
+            event_id = row.get("event_id", "")
+            question_text = row.get("user_question", "") or ""
+            is_adverse, reason = check_adverse_event(question_text)
+            log_id = row.get("log_id", "") or ""
+            session_info = session_map.get(event_id) or session_map.get(log_id) or {}
+            session_id = session_info.get("session_id", "") if isinstance(session_info, dict) else session_info
+            user_type = session_info.get("user_type", "") if isinstance(session_info, dict) else ""
+            q_date = _parse_date(row.get("date", ""))
+            if not q_date or not (api_start <= q_date <= api_end):
+                continue
+            records.append({
+                "event_id": event_id,
+                "user_question": question_text,
+                "question_date": q_date,
+                "log_id": log_id,
+                "source": str(row.get("source", "") or ""),
+                "session_id": session_id,
+                "adverse_event": is_adverse,
+                "adverse_reason": reason,
+                "user_type": user_type,
+                "recommendations_json": json.dumps(enrichment_map.get(event_id, [])),
+                "product_context": "",
+            })
+
+        week_stats = resolve_product_context(records, week_key)
+        q_count += upsert_questions(records)
+        for name in product_stats:
+            product_stats[name] += week_stats.get(name, 0)
+
+    backfill_stats = backfill_product_context(api_start, api_end)
+    if backfill_stats.get("updated"):
+        for key in ("from_recommendations", "from_session_events"):
+            product_stats[key] += backfill_stats.get(key, 0)
+        product_stats["still_missing"] = backfill_stats.get("still_missing", product_stats["still_missing"])
+
+    day_count = (api_end - api_start).days + 1
+    if api_start == start_date and api_end == end_date:
+        message = f"Fetched {day_count} day(s) from API and merged them into the database."
+    else:
+        message = (
+            f"Refreshed {api_start} through {api_end}; dates outside the refresh window "
+            "were loaded from the database."
+        )
     logger.info(
         "product_context: from_recs=%s from_session=%s missing=%s",
         product_stats["from_recommendations"],
@@ -455,7 +480,7 @@ def sync(start_date: date, end_date: date) -> Dict[str, Any]:
     )
     return {
         "fetched_from_api": True,
-        "message": f"Fetched {day_count} day(s) from API and saved to database.",
+        "message": message,
         "questions_synced": q_count,
         "conversations_synced": result["counts"].get("agg_session_details", 0),
         "ingestion_counts": result["counts"],
